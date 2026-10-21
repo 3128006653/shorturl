@@ -1,5 +1,7 @@
 package com.demo.shorturl;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
@@ -15,6 +17,8 @@ import java.util.Random;
 @RestController
 public class ShortUrlController {
 
+    private static final Logger log = LoggerFactory.getLogger(ShortUrlController.class);
+
     @Autowired
     private UrlMapRepository repo;
 
@@ -24,7 +28,7 @@ public class ShortUrlController {
     private static final String CHARS =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    private static final int MAX_RETRY = 3;
+    private static final int MAX_RETRY = 100;
     private static final String KEY_PREFIX = "shorturl:";
     private static final Duration CACHE_TTL = Duration.ofHours(1);
     private static final Duration NULL_TTL = Duration.ofSeconds(60);
@@ -46,7 +50,7 @@ public class ShortUrlController {
         m.setCreateTime(LocalDateTime.now());
         repo.save(m);
 
-        redis.opsForValue().set(KEY_PREFIX + code, longUrl, CACHE_TTL);
+        safeSet(KEY_PREFIX + code, longUrl, CACHE_TTL);
 
         return ResponseEntity.ok(code);
     }
@@ -55,7 +59,7 @@ public class ShortUrlController {
     public ResponseEntity<Void> redirect(@PathVariable String code) {
         String key = KEY_PREFIX + code;
 
-        String cached = redis.opsForValue().get(key);
+        String cached = safeGet(key);
         if (cached != null) {
             if (cached.isEmpty()) {
                 return ResponseEntity.notFound().build();
@@ -65,11 +69,11 @@ public class ShortUrlController {
 
         UrlMap m = repo.findByShortCode(code);
         if (m == null) {
-            redis.opsForValue().set(key, "", NULL_TTL);
+            safeSet(key, "", NULL_TTL);
             return ResponseEntity.notFound().build();
         }
 
-        redis.opsForValue().set(key, m.getLongUrl(), CACHE_TTL);
+        safeSet(key, m.getLongUrl(), CACHE_TTL);
         return redirectTo(m.getLongUrl());
     }
 
@@ -77,6 +81,23 @@ public class ShortUrlController {
     public String expand(@RequestParam String code) {
         UrlMap m = repo.findByShortCode(code);
         return m == null ? "not found" : m.getLongUrl();
+    }
+
+    private String safeGet(String key) {
+        try {
+            return redis.opsForValue().get(key);
+        } catch (Exception e) {
+            log.warn("redis unavailable, fallback to db, key={}", key, e);
+            return null;
+        }
+    }
+
+    private void safeSet(String key, String value, Duration ttl) {
+        try {
+            redis.opsForValue().set(key, value, ttl);
+        } catch (Exception e) {
+            log.warn("redis unavailable, skip cache write, key={}", key, e);
+        }
     }
 
     private ResponseEntity<Void> redirectTo(String url) {
