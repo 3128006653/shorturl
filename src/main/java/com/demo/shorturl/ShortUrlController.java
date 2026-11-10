@@ -1,5 +1,7 @@
 package com.demo.shorturl;
 
+import com.demo.ratelimit.RateLimit;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,7 @@ public class ShortUrlController {
     private static final Duration NULL_TTL = Duration.ofSeconds(60);
 
     @PostMapping("/api/shorten")
+    @RateLimit(key = "shorten", limit = 20, algorithm = "redis")
     public ResponseEntity<String> shorten(@RequestParam String longUrl) {
         if (longUrl == null || longUrl.trim().isEmpty()) {
             return ResponseEntity.badRequest().body("longUrl is empty");
